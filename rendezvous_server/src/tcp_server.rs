@@ -9,29 +9,95 @@ use hbb_common::futures::SinkExt;
 use hbb_common::futures_util::StreamExt;
 use hbb_common::protobuf::Message;
 use hbb_common::rendezvous_proto::{
-    register_pk_response, rendezvous_message, FetchLocalAddr, RegisterPk, RegisterPkResponse,
-    RendezvousMessage,
+    punch_hole_response, register_pk_response, rendezvous_message, FetchLocalAddr, PunchHole,
+    PunchHoleResponse, RegisterPk, RegisterPkResponse, RendezvousMessage, RequestRelay,
 };
-use hbb_common::tcp::{new_listener, FramedStream};
+use hbb_common::sodiumoxide::base64;
+use hbb_common::sodiumoxide::crypto::sign;
+use hbb_common::sodiumoxide::crypto::sign::SecretKey;
+use hbb_common::tcp::new_listener;
 use hbb_common::tokio_util::codec::Framed;
-use hbb_common::{timeout, AddrMangle, ResultType};
-use once_cell::sync::Lazy;
+use hbb_common::{timeout, AddrMangle};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tracing::Span;
 
 use database::Database;
 
-type MsgSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
-pub(crate) static SINK_MAP: Lazy<Arc<RwLock<HashMap<SocketAddr, MsgSink>>>> =
-    Lazy::new(|| Default::default());
+use crate::Variant;
+
+pub type MessageSink = SplitSink<Framed<TcpStream, BytesCodec>, Bytes>;
+pub type MessageSinkMap = Arc<RwLock<HashMap<SocketAddr, MessageSink>>>;
 
 /// 打洞与连接服务
-pub struct TcpServer;
+pub struct TcpServer {
+    db: Database,
+    map: MessageSinkMap,
+    port: u16,
+    handle: Option<JoinHandle<()>>,
+    receiver: Option<UnboundedReceiver<(SocketAddr, RendezvousMessage)>>,
+    allow_relay: bool,
+    secret_key: SecretKey,
+}
 
 impl TcpServer {
-    #[instrument(name = "tcp_server", skip(db))]
-    pub async fn run(db: Database, port: u16) {
+    pub fn new(db: Database, port: u16, allow_relay: bool, secret_key: SecretKey) -> Self {
+        Self {
+            db,
+            map: Arc::new(Default::default()),
+            port,
+            handle: None,
+            receiver: None,
+            allow_relay,
+            secret_key,
+        }
+    }
+
+    pub async fn run(&mut self) {
+        if !self.running() {
+            self.map.write().await.clear();
+            let (sender, receiver) = unbounded_channel();
+            self.receiver = Some(receiver);
+            self.handle = Some(tokio::spawn(Self::run_inner(
+                self.db.clone(),
+                self.map.clone(),
+                sender,
+                self.port,
+                self.allow_relay,
+                self.secret_key.clone(),
+            )));
+        }
+    }
+
+    #[inline]
+    pub fn running(&self) -> bool {
+        self.handle
+            .as_ref()
+            .map(|h| !h.is_finished())
+            .unwrap_or_default()
+    }
+
+    pub async fn get_udp_message(&mut self) -> Vec<(SocketAddr, RendezvousMessage)> {
+        let mut ret = vec![];
+        if let Some(r) = &mut self.receiver {
+            while let Ok(a) = r.try_recv() {
+                ret.push(a);
+            }
+        }
+        ret
+    }
+
+    #[instrument(name = "tcp_server", skip(db, map, sender))]
+    async fn run_inner(
+        db: Database,
+        map: MessageSinkMap,
+        sender: UnboundedSender<(SocketAddr, RendezvousMessage)>,
+        port: u16,
+        allow_relay: bool,
+        secret_key: SecretKey,
+    ) {
         let address = format!("0.0.0.0:{}", port);
         let listener = match new_listener(&address, false).await {
             Ok(l) => l,
@@ -47,8 +113,12 @@ impl TcpServer {
                     tokio::spawn(Self::client_handle(
                         Span::current(),
                         db.clone(),
+                        map.clone(),
+                        sender.clone(),
                         stream,
                         addr,
+                        allow_relay,
+                        secret_key.clone(),
                     ));
                 }
                 Err(e) => {
@@ -59,13 +129,32 @@ impl TcpServer {
         }
     }
 
-    #[instrument(parent = parent_span, skip(parent_span, db, stream))]
-    async fn client_handle(parent_span: Span, db: Database, stream: TcpStream, addr: SocketAddr) {
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(parent = parent_span, skip(parent_span, db, map, stream, sender, allow_relay, secret_key))]
+    async fn client_handle(
+        parent_span: Span,
+        db: Database,
+        map: MessageSinkMap,
+        sender: UnboundedSender<(SocketAddr, RendezvousMessage)>,
+        stream: TcpStream,
+        addr: SocketAddr,
+        allow_relay: bool,
+        secret_key: SecretKey,
+    ) {
         debug!("已接收来自 {addr} 的连接");
 
         stream.set_nodelay(true).ok();
 
-        let (mut sink, mut stream) = Framed::new(stream, BytesCodec::new()).split();
+        let (sink, mut stream) = Framed::new(stream, BytesCodec::new()).split();
+        map.write().await.insert(addr, sink);
+
+        macro_rules! send {
+            ($msg: expr) => {
+                if !Self::send(&map, addr, $msg).await {
+                    break;
+                }
+            };
+        }
 
         while let Ok(Some(Ok(bytes))) = timeout(30_000, stream.next()).await {
             let msg = match RendezvousMessage::parse_from_bytes(&bytes) {
@@ -76,27 +165,120 @@ impl TcpServer {
             };
             trace!("tcp: {:?}", &msg);
 
+            let public_key = base64::encode(&secret_key.public_key().0, Variant::UrlSafe);
+
             match msg {
                 rendezvous_message::Union::register_pk(rp) => {
-                    let result = Self::update_pk(db.clone(), &rp).await;
+                    let result = Self::update_id(db.clone(), &rp).await;
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
                         result: result.into(),
                         ..Default::default()
                     });
-                    if !Self::send(&mut sink, msg_out).await {
-                        break;
+                    send!(msg_out);
+                }
+                rendezvous_message::Union::punch_hole_request(phr) => {
+                    if phr.licence_key != public_key {
+                        let mut msg_out = RendezvousMessage::new();
+                        msg_out.set_punch_hole_response(PunchHoleResponse {
+                            failure: punch_hole_response::Failure::LICENSE_MISMATCH.into(),
+                            ..Default::default()
+                        });
+                        send!(msg_out);
+                        continue;
                     }
+
+                    match db.get_peer(&phr.id).await {
+                        Ok(Some(peer)) => {
+                            let now = chrono::Utc::now();
+                            if now - peer.last_register_time > chrono::Duration::seconds(30) {
+                                let mut msg_out = RendezvousMessage::new();
+                                msg_out.set_punch_hole_response(PunchHoleResponse {
+                                    failure: punch_hole_response::Failure::OFFLINE.into(),
+                                    ..Default::default()
+                                });
+                                send!(msg_out);
+                                continue;
+                            }
+
+                            let peer_addr: SocketAddr = peer.socket_addr.parse().unwrap();
+                            if allow_relay || addr.ip() != peer_addr.ip() {
+                                let mut msg_out = RendezvousMessage::new();
+                                msg_out.set_punch_hole(PunchHole {
+                                    socket_addr: AddrMangle::encode(addr),
+                                    nat_type: phr.nat_type,
+                                    ..Default::default()
+                                });
+                                let _ = sender.send((peer_addr, msg_out));
+                            } else {
+                                let mut msg_out = RendezvousMessage::new();
+                                msg_out.set_fetch_local_addr(FetchLocalAddr {
+                                    socket_addr: AddrMangle::encode(addr),
+                                    ..Default::default()
+                                });
+                                let _ = sender.send((peer_addr, msg_out));
+                            }
+                        }
+                        Ok(None) => {
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_punch_hole_response(PunchHoleResponse {
+                                failure: punch_hole_response::Failure::ID_NOT_EXIST.into(),
+                                ..Default::default()
+                            });
+                            send!(msg_out);
+                        }
+                        Err(error) => {
+                            warn!(%error, "获取打洞对象信息失败");
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_punch_hole_response(PunchHoleResponse {
+                                other_failure: "服务出错".to_string(),
+                                ..Default::default()
+                            });
+                            send!(msg_out);
+                        }
+                    }
+                }
+                rendezvous_message::Union::local_addr(la) => {
+                    let socket_addr = AddrMangle::decode(&la.socket_addr);
+                    let local_addr = AddrMangle::decode(&la.local_addr);
+                    let id = &la.id;
+                    debug!(%addr, %socket_addr, %local_addr, %id, "local addr");
+
+                    let mut msg_out = RendezvousMessage::new();
+                    let mut p = PunchHoleResponse {
+                        socket_addr: la.local_addr,
+                        pk: Self::get_pk(db.clone(), &la.version, la.id, &secret_key).await,
+                        relay_server: la.relay_server,
+                        ..Default::default()
+                    };
+                    p.set_is_local(true);
+                    msg_out.set_punch_hole_response(p);
+                    Self::send(&map, socket_addr, msg_out).await;
+                }
+                rendezvous_message::Union::relay_response(mut rr) => {
+                    let addr_b = AddrMangle::decode(&rr.socket_addr);
+                    rr.socket_addr = Default::default();
+                    rr.relay_server = "192.168.6.242:21117".to_string();
+                    let id = rr.get_id();
+                    if !id.is_empty() {
+                        let pk = Self::get_pk(db.clone(), &rr.version, id.to_string(), &secret_key)
+                            .await;
+                        rr.set_pk(pk);
+                    }
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_relay_response(rr);
+                    Self::send(&map, addr_b, msg_out).await;
                 }
 
                 _ => {}
             }
         }
 
+        map.write().await.remove(&addr);
         debug!("连接已断开");
     }
 
-    async fn update_pk(db: Database, rp: &RegisterPk) -> register_pk_response::Result {
+    async fn update_id(db: Database, rp: &RegisterPk) -> register_pk_response::Result {
         match db.get_peer(&rp.id).await {
             Ok(None) => match db.get_peer(&rp.old_id).await {
                 Ok(Some(peer)) => match String::from_utf8_lossy(&rp.uuid).parse() {
@@ -141,18 +323,43 @@ impl TcpServer {
         }
     }
 
-    async fn send(sink: &mut MsgSink, msg: RendezvousMessage) -> bool {
-        match msg.write_to_bytes() {
-            Ok(bytes) => match sink.send(bytes.into()).await {
-                Ok(_) => true,
+    async fn send(map: &MessageSinkMap, socket_addr: SocketAddr, msg: RendezvousMessage) -> bool {
+        if let Some(sink) = map.write().await.get_mut(&socket_addr) {
+            match msg.write_to_bytes() {
+                Ok(bytes) => match sink.send(bytes.into()).await {
+                    Ok(_) => true,
+                    Err(error) => {
+                        warn!(%error, "发送响应消息失败");
+                        false
+                    }
+                },
                 Err(error) => {
-                    warn!(%error, "发送响应消息失败");
+                    warn!(%error, "无法将消息转为数据");
                     false
                 }
-            },
-            Err(error) => {
-                warn!(%error, "无法将消息转为数据");
-                false
+            }
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    async fn get_pk(db: Database, version: &str, id: String, sk: &SecretKey) -> Vec<u8> {
+        if version.is_empty() {
+            Vec::new()
+        } else {
+            match db.get_peer(&id).await {
+                Ok(Some(peer)) => sign::sign(
+                    &hbb_common::message_proto::IdPk {
+                        id,
+                        pk: peer.pk,
+                        ..Default::default()
+                    }
+                    .write_to_bytes()
+                    .unwrap_or_default(),
+                    sk,
+                ),
+                _ => Vec::new(),
             }
         }
     }

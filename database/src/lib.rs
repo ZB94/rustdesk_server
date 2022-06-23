@@ -49,7 +49,7 @@ impl Database {
                 .await?;
                 Ok(pk.is_empty() || old_socket_addr != socket_addr)
             }
-            None => return Ok(true),
+            None => Ok(true),
         }
     }
 
@@ -83,7 +83,7 @@ impl Database {
                 .bind(socket_addr)
                 .execute(&self.pool)
                 .await
-                .map(|_|(()))
+                .map(|_|())
         }
     }
 }

@@ -6,13 +6,59 @@ use hbb_common::rendezvous_proto::*;
 use hbb_common::udp::FramedSocket;
 use hbb_common::ResultType;
 use std::net::SocketAddr;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
 /// ID注册与心跳服务
-pub struct UdpServer;
+pub struct UdpServer {
+    db: Database,
+    handle: Option<JoinHandle<()>>,
+    sender: Option<UnboundedSender<(SocketAddr, RendezvousMessage)>>,
+    port: u16,
+}
 
 impl UdpServer {
-    #[instrument(name = "udp_server", skip(db))]
-    pub async fn run(db: Database, port: u16) {
+    pub fn new(db: Database, port: u16) -> Self {
+        Self {
+            db,
+            handle: None,
+            sender: None,
+            port,
+        }
+    }
+
+    #[inline]
+    pub fn running(&self) -> bool {
+        self.handle
+            .as_ref()
+            .map(|h| !h.is_finished())
+            .unwrap_or_default()
+    }
+
+    pub async fn run(&mut self) {
+        if !self.running() {
+            let (sender, receiver) = unbounded_channel();
+            self.sender = Some(sender);
+            self.handle = Some(tokio::spawn(Self::run_inner(
+                self.db.clone(),
+                self.port,
+                receiver,
+            )))
+        }
+    }
+
+    pub fn send_message(&self, addr: SocketAddr, msg: RendezvousMessage) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send((addr, msg));
+        }
+    }
+
+    #[instrument(name = "udp_server", skip(db, receiver))]
+    async fn run_inner(
+        db: Database,
+        port: u16,
+        mut receiver: UnboundedReceiver<(SocketAddr, RendezvousMessage)>,
+    ) {
         let address = format!("0.0.0.0:{}", port);
         let mut socket = match FramedSocket::new(&address).await {
             Ok(s) => s,
@@ -23,19 +69,27 @@ impl UdpServer {
         };
         info!("正在监听UDP地址: {address}");
 
-        while let Some(res) = socket.next().await {
-            match res {
-                Ok((bytes, addr)) => {
-                    if let Err(error) =
-                        Self::client_handle(db.clone(), &bytes, addr.into(), &mut socket).await
-                    {
-                        warn!(%error, "出现消息时出现错误");
-                        return;
-                    }
+        loop {
+            tokio::select! {
+                Some((addr, msg)) = receiver.recv() => {
+                    let _ = socket.send(&msg, addr).await;
                 }
-                Err(error) => {
-                    warn!(%error, "接收数据时发生错误");
-                    return;
+                res = socket.next() => {
+                    match res {
+                        Some(Ok((bytes, addr))) => {
+                            if let Err(error) =
+                                Self::client_handle(db.clone(), &bytes, addr.into(), &mut socket).await
+                            {
+                                warn!(%error, "出现消息时出现错误");
+                                return;
+                            }
+                        }
+                        Some(Err(error)) => {
+                            warn!(%error, "接收数据时发生错误");
+                            return;
+                        }
+                        None => return,
+                    }
                 }
             }
         }
@@ -48,7 +102,7 @@ impl UdpServer {
         addr: SocketAddr,
         socket: &mut FramedSocket,
     ) -> ResultType<()> {
-        if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
+        if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
             trace!("udp: {:?}", &msg_in.union);
             match msg_in.union {
                 Some(rendezvous_message::Union::register_peer(rp)) if !rp.id.is_empty() => {
