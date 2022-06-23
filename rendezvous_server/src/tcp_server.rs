@@ -10,7 +10,7 @@ use hbb_common::futures_util::StreamExt;
 use hbb_common::protobuf::Message;
 use hbb_common::rendezvous_proto::{
     punch_hole_response, register_pk_response, rendezvous_message, FetchLocalAddr, PunchHole,
-    PunchHoleResponse, RegisterPk, RegisterPkResponse, RendezvousMessage, RequestRelay,
+    PunchHoleResponse, RegisterPk, RegisterPkResponse, RendezvousMessage,
 };
 use hbb_common::sodiumoxide::base64;
 use hbb_common::sodiumoxide::crypto::sign;
@@ -38,19 +38,17 @@ pub struct TcpServer {
     port: u16,
     handle: Option<JoinHandle<()>>,
     receiver: Option<UnboundedReceiver<(SocketAddr, RendezvousMessage)>>,
-    allow_relay: bool,
     secret_key: SecretKey,
 }
 
 impl TcpServer {
-    pub fn new(db: Database, port: u16, allow_relay: bool, secret_key: SecretKey) -> Self {
+    pub fn new(db: Database, port: u16, secret_key: SecretKey) -> Self {
         Self {
             db,
             map: Arc::new(Default::default()),
             port,
             handle: None,
             receiver: None,
-            allow_relay,
             secret_key,
         }
     }
@@ -65,7 +63,6 @@ impl TcpServer {
                 self.map.clone(),
                 sender,
                 self.port,
-                self.allow_relay,
                 self.secret_key.clone(),
             )));
         }
@@ -95,7 +92,6 @@ impl TcpServer {
         map: MessageSinkMap,
         sender: UnboundedSender<(SocketAddr, RendezvousMessage)>,
         port: u16,
-        allow_relay: bool,
         secret_key: SecretKey,
     ) {
         let address = format!("0.0.0.0:{}", port);
@@ -117,7 +113,6 @@ impl TcpServer {
                         sender.clone(),
                         stream,
                         addr,
-                        allow_relay,
                         secret_key.clone(),
                     ));
                 }
@@ -130,7 +125,7 @@ impl TcpServer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[instrument(parent = parent_span, skip(parent_span, db, map, stream, sender, allow_relay, secret_key))]
+    #[instrument(parent = parent_span, skip(parent_span, db, map, stream, sender, secret_key))]
     async fn client_handle(
         parent_span: Span,
         db: Database,
@@ -138,7 +133,6 @@ impl TcpServer {
         sender: UnboundedSender<(SocketAddr, RendezvousMessage)>,
         stream: TcpStream,
         addr: SocketAddr,
-        allow_relay: bool,
         secret_key: SecretKey,
     ) {
         debug!("已接收来自 {addr} 的连接");
@@ -202,7 +196,7 @@ impl TcpServer {
                             }
 
                             let peer_addr: SocketAddr = peer.socket_addr.parse().unwrap();
-                            if allow_relay || addr.ip() != peer_addr.ip() {
+                            if addr.ip() != peer_addr.ip() {
                                 let mut msg_out = RendezvousMessage::new();
                                 msg_out.set_punch_hole(PunchHole {
                                     socket_addr: AddrMangle::encode(addr),
@@ -269,8 +263,33 @@ impl TcpServer {
                     msg_out.set_relay_response(rr);
                     Self::send(&map, addr_b, msg_out).await;
                 }
-
-                _ => {}
+                // rendezvous_message::Union::request_relay(_rr) => {}
+                // rendezvous_message::Union::punch_hole_sent(phs) => {
+                //     let addr_a = AddrMangle::decode(&phs.socket_addr);
+                //     let mut msg_out = RendezvousMessage::new();
+                //     let mut p = PunchHoleResponse {
+                //         socket_addr: AddrMangle::encode(addr),
+                //         pk: Self::get_pk(db.clone(), &phs.version, phs.id, &secret_key).await,
+                //         relay_server: phs.relay_server.clone(),
+                //         ..Default::default()
+                //     };
+                //     if let Ok(t) = phs.nat_type.enum_value() {
+                //         p.set_nat_type(t);
+                //     }
+                //     msg_out.set_punch_hole_response(p);
+                //     let _ = Self::send(&map, addr_a, msg_out).await;
+                // }
+                // rendezvous_message::Union::test_nat_request(_) => {
+                //     let mut msg_out = RendezvousMessage::new();
+                //     msg_out.set_test_nat_response(TestNatResponse {
+                //         port: addr.port() as _,
+                //         ..Default::default()
+                //     });
+                //     send!(msg_out);
+                // }
+                _ => {
+                    warn!(?msg, "未解析的TCP消息");
+                }
             }
         }
 

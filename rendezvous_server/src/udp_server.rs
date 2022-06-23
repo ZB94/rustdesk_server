@@ -8,6 +8,8 @@ use hbb_common::ResultType;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
+use tracing::field::debug;
+use tracing::Span;
 
 /// ID注册与心跳服务
 pub struct UdpServer {
@@ -95,7 +97,7 @@ impl UdpServer {
         }
     }
 
-    #[instrument(skip(db, bytes, socket))]
+    #[instrument(skip(db, bytes, socket), fields(message))]
     async fn client_handle(
         db: Database,
         bytes: &BytesMut,
@@ -103,9 +105,16 @@ impl UdpServer {
         socket: &mut FramedSocket,
     ) -> ResultType<()> {
         if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(bytes) {
-            trace!("udp: {:?}", &msg_in.union);
-            match msg_in.union {
-                Some(rendezvous_message::Union::register_peer(rp)) if !rp.id.is_empty() => {
+            let msg = match msg_in.union {
+                Some(msg) => msg,
+                _ => return Ok(()),
+            };
+
+            Span::current().record("message", &debug(&msg));
+            trace!("已接收到新消息");
+
+            match msg {
+                rendezvous_message::Union::register_peer(rp) => {
                     let request_pk = match db.update_addr(&rp.id, addr).await {
                         Ok(r) => r,
                         Err(error) => {
@@ -113,7 +122,7 @@ impl UdpServer {
                             true
                         }
                     };
-                    trace!("request pk: {}", request_pk);
+                    debug!("request pk: {}", request_pk);
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_peer_response(RegisterPeerResponse {
                         request_pk,
@@ -122,16 +131,24 @@ impl UdpServer {
                     socket.send(&msg_out, addr).await?;
                 }
 
-                Some(rendezvous_message::Union::register_pk(rk))
-                    if !rk.uuid.is_empty() && !rk.pk.is_empty() =>
-                {
+                rendezvous_message::Union::register_pk(rk) => {
+                    if rk.pk.is_empty() {
+                        warn!("输入pk为空");
+                        return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                    }
+
                     let uuid = match String::from_utf8_lossy(&rk.uuid).parse::<Uuid>() {
                         Ok(id) => id,
-                        Err(_) => return send_rk_res(socket, addr, UUID_MISMATCH).await,
+                        Err(error) => {
+                            warn!(%error, "输入uuid无效");
+                            return send_rk_res(socket, addr, UUID_MISMATCH).await;
+                        }
                     };
                     let id = rk.id;
                     let socket_addr = addr.to_string();
+
                     if id.len() < 6 {
+                        warn!("输入id长度过短");
                         return send_rk_res(socket, addr, UUID_MISMATCH).await;
                     }
 
@@ -162,11 +179,12 @@ impl UdpServer {
                             return send_rk_res(socket, addr, SERVER_ERROR).await;
                         }
                     };
-                    trace!(changed = changed, guid = ?guid, "check changed");
+                    debug!(changed, ?guid, "修改状态");
 
                     return if changed {
                         match db.update_pk(guid, &id, uuid, rk.pk, addr).await {
                             Ok(_) => {
+                                info!("Peer({id})状态已更新");
                                 send_rk_res(socket, addr, register_pk_response::Result::OK).await
                             }
                             Err(error) => {
@@ -175,21 +193,24 @@ impl UdpServer {
                             }
                         }
                     } else {
+                        info!("Peer({id})状态未发生变化");
                         send_rk_res(socket, addr, register_pk_response::Result::OK).await
                     };
                 }
-                Some(rendezvous_message::Union::punch_hole_request(ph)) => {
-                    warn!(request=?ph, "punch_hole_request");
+                // Some(rendezvous_message::Union::punch_hole_request(ph)) => {
+                //     warn!(request=?ph, "punch_hole_request");
+                // }
+                // Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
+                //     warn!(request=?phs, "punch_hole_sent");
+                // }
+                // Some(rendezvous_message::Union::local_addr(la)) => {
+                //     warn!(request=?la, "local_addr");
+                // }
+                // Some(rendezvous_message::Union::configure_update(_)) => {}
+                // Some(rendezvous_message::Union::software_update(_)) => {}
+                _ => {
+                    warn!("未解析处理的UDP消息");
                 }
-                Some(rendezvous_message::Union::punch_hole_sent(phs)) => {
-                    warn!(request=?phs, "punch_hole_sent");
-                }
-                Some(rendezvous_message::Union::local_addr(la)) => {
-                    warn!(request=?la, "local_addr");
-                }
-                Some(rendezvous_message::Union::configure_update(_)) => {}
-                Some(rendezvous_message::Union::software_update(_)) => {}
-                _ => {}
             }
         }
         Ok(())
