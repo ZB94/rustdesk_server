@@ -547,6 +547,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hbbr"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hbb_common",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "hbbs"
 version = "0.1.0"
 dependencies = [

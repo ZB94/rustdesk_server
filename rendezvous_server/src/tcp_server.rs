@@ -10,7 +10,7 @@ use hbb_common::futures_util::StreamExt;
 use hbb_common::protobuf::Message;
 use hbb_common::rendezvous_proto::{
     punch_hole_response, register_pk_response, rendezvous_message, FetchLocalAddr, PunchHole,
-    PunchHoleResponse, RegisterPk, RegisterPkResponse, RendezvousMessage,
+    PunchHoleResponse, RegisterPk, RegisterPkResponse, RendezvousMessage, TestNatResponse,
 };
 use hbb_common::sodiumoxide::base64;
 use hbb_common::sodiumoxide::crypto::sign;
@@ -196,22 +196,22 @@ impl TcpServer {
                             }
 
                             let peer_addr: SocketAddr = peer.socket_addr.parse().unwrap();
-                            if addr.ip() != peer_addr.ip() {
-                                let mut msg_out = RendezvousMessage::new();
-                                msg_out.set_punch_hole(PunchHole {
-                                    socket_addr: AddrMangle::encode(addr),
-                                    nat_type: phr.nat_type,
-                                    ..Default::default()
-                                });
-                                let _ = sender.send((peer_addr, msg_out));
-                            } else {
-                                let mut msg_out = RendezvousMessage::new();
-                                msg_out.set_fetch_local_addr(FetchLocalAddr {
-                                    socket_addr: AddrMangle::encode(addr),
-                                    ..Default::default()
-                                });
-                                let _ = sender.send((peer_addr, msg_out));
-                            }
+                            // if addr.ip() != peer_addr.ip() {
+                            //     let mut msg_out = RendezvousMessage::new();
+                            //     msg_out.set_punch_hole(PunchHole {
+                            //         socket_addr: AddrMangle::encode(addr),
+                            //         nat_type: phr.nat_type,
+                            //         ..Default::default()
+                            //     });
+                            //     let _ = sender.send((peer_addr, msg_out));
+                            // } else {
+                            let mut msg_out = RendezvousMessage::new();
+                            msg_out.set_fetch_local_addr(FetchLocalAddr {
+                                socket_addr: AddrMangle::encode(addr),
+                                ..Default::default()
+                            });
+                            let _ = sender.send((peer_addr, msg_out));
+                            // }
                         }
                         Ok(None) => {
                             let mut msg_out = RendezvousMessage::new();
@@ -252,7 +252,6 @@ impl TcpServer {
                 rendezvous_message::Union::relay_response(mut rr) => {
                     let addr_b = AddrMangle::decode(&rr.socket_addr);
                     rr.socket_addr = Default::default();
-                    rr.relay_server = "192.168.6.242:21117".to_string();
                     let id = rr.get_id();
                     if !id.is_empty() {
                         let pk = Self::get_pk(db.clone(), &rr.version, id.to_string(), &secret_key)
@@ -263,30 +262,42 @@ impl TcpServer {
                     msg_out.set_relay_response(rr);
                     Self::send(&map, addr_b, msg_out).await;
                 }
-                // rendezvous_message::Union::request_relay(_rr) => {}
-                // rendezvous_message::Union::punch_hole_sent(phs) => {
-                //     let addr_a = AddrMangle::decode(&phs.socket_addr);
-                //     let mut msg_out = RendezvousMessage::new();
-                //     let mut p = PunchHoleResponse {
-                //         socket_addr: AddrMangle::encode(addr),
-                //         pk: Self::get_pk(db.clone(), &phs.version, phs.id, &secret_key).await,
-                //         relay_server: phs.relay_server.clone(),
-                //         ..Default::default()
-                //     };
-                //     if let Ok(t) = phs.nat_type.enum_value() {
-                //         p.set_nat_type(t);
-                //     }
-                //     msg_out.set_punch_hole_response(p);
-                //     let _ = Self::send(&map, addr_a, msg_out).await;
-                // }
-                // rendezvous_message::Union::test_nat_request(_) => {
-                //     let mut msg_out = RendezvousMessage::new();
-                //     msg_out.set_test_nat_response(TestNatResponse {
-                //         port: addr.port() as _,
-                //         ..Default::default()
-                //     });
-                //     send!(msg_out);
-                // }
+                rendezvous_message::Union::request_relay(mut rr) => match db.get_peer(&rr.id).await
+                {
+                    Ok(Some(peer)) => {
+                        let mut msg_out = RendezvousMessage::new();
+                        rr.socket_addr = AddrMangle::encode(addr);
+                        msg_out.set_request_relay(rr);
+                        let peer_addr = peer.socket_addr.parse().unwrap();
+                        let _ = sender.send((peer_addr, msg_out));
+                    }
+                    Ok(None) => warn!(message = ?rr, "请求中继到不存在Peer"),
+                    Err(error) => warn!(message = ?rr, %error, "获取Peer时出现错误"),
+                },
+                rendezvous_message::Union::punch_hole_sent(phs) => {
+                    let addr_a = AddrMangle::decode(&phs.socket_addr);
+                    let mut msg_out = RendezvousMessage::new();
+                    let mut p = PunchHoleResponse {
+                        socket_addr: AddrMangle::encode(addr),
+                        pk: Self::get_pk(db.clone(), &phs.version, phs.id, &secret_key).await,
+                        relay_server: phs.relay_server.clone(),
+                        ..Default::default()
+                    };
+                    if let Ok(t) = phs.nat_type.enum_value() {
+                        p.set_nat_type(t);
+                    }
+                    msg_out.set_punch_hole_response(p);
+                    let _ = Self::send(&map, addr_a, msg_out).await;
+                }
+                rendezvous_message::Union::test_nat_request(_) => {
+                    debug!("test nat request");
+                    let mut msg_out = RendezvousMessage::new();
+                    msg_out.set_test_nat_response(TestNatResponse {
+                        port: addr.port() as _,
+                        ..Default::default()
+                    });
+                    send!(msg_out);
+                }
                 _ => {
                     warn!(?msg, "未解析的TCP消息");
                 }
