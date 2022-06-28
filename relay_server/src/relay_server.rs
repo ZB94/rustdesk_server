@@ -1,3 +1,6 @@
+use async_speed_limit::clock::StandardClock;
+use async_speed_limit::Limiter;
+use byte_unit::Byte;
 use hbb_common::protobuf::Message;
 use hbb_common::rendezvous_proto::{rendezvous_message, RendezvousMessage};
 use hbb_common::tcp::{new_listener, FramedStream};
@@ -7,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tracing::field::display;
 use tracing::Span;
 
 type PeerMap = Arc<Mutex<HashMap<String, FramedStream>>>;
@@ -17,15 +21,17 @@ pub struct RelayServer {
     public_key: String,
     peers: PeerMap,
     handle: Option<JoinHandle<()>>,
+    speed_limit: Byte,
 }
 
 impl RelayServer {
-    pub fn new(port: u16, public_key: String) -> Self {
+    pub fn new(port: u16, public_key: String, speed_limit: Byte) -> Self {
         Self {
             port,
             public_key,
             peers: Arc::new(Default::default()),
             handle: None,
+            speed_limit,
         }
     }
 
@@ -44,12 +50,17 @@ impl RelayServer {
                 self.port,
                 self.public_key.clone(),
                 self.peers.clone(),
+                self.speed_limit,
             )));
         }
     }
 
-    #[instrument(name = "relay_server", skip(peers))]
-    async fn run_inner(port: u16, public_key: String, peers: PeerMap) {
+    #[instrument(
+        name = "relay_server",
+        skip(peers),
+        fields(speed_limit = %speed_limit.get_appropriate_unit(true))
+    )]
+    async fn run_inner(port: u16, public_key: String, peers: PeerMap, speed_limit: Byte) {
         let address = format!("0.0.0.0:{port}");
         info!("正在监听TCP地址: {address}");
 
@@ -72,6 +83,7 @@ impl RelayServer {
                         public_key.clone(),
                         addr,
                         peers.clone(),
+                        speed_limit,
                     ));
                 }
                 Err(error) => {
@@ -82,18 +94,28 @@ impl RelayServer {
         }
     }
 
-    #[instrument(parent = parent_span, skip(parent_span, stream, peers, public_key))]
+    #[instrument(
+        parent = parent_span,
+        skip(parent_span, stream, peers, public_key, speed_limit),
+        fields(id, uuid)
+    )]
     async fn make_pair(
         parent_span: Span,
         mut stream: FramedStream,
         public_key: String,
         addr: SocketAddr,
         peers: PeerMap,
+        speed_limit: Byte,
     ) {
         let rr = if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
             match RendezvousMessage::parse_from_bytes(&bytes) {
                 Ok(msg) => match msg.union {
-                    Some(rendezvous_message::Union::request_relay(rr)) => rr,
+                    Some(rendezvous_message::Union::request_relay(rr)) => {
+                        Span::current()
+                            .record("id", &display(&rr.id))
+                            .record("uuid", &display(&rr.uuid));
+                        rr
+                    }
                     Some(msg) => {
                         warn!(?msg, "接收到异常消息");
                         return;
@@ -126,45 +148,33 @@ impl RelayServer {
         let peer = peers.lock().await.remove(&rr.uuid);
         match peer {
             Some(mut peer) => {
-                info!("中继请求 {} 获得来自{}的对应请求", &rr.uuid, addr);
+                info!("中继请求对均已连接");
                 peer.set_raw();
                 stream.set_raw();
-                info!("{} 的流都处于raw状态", &rr.uuid);
-                Self::relay(stream, peer).await;
-                info!("中继 {} 已停止", &rr.uuid);
-
-                // let (mut pw, mut pr) = peer.split();
-                // let (mut sw, mut sr) = stream.split();
-                //
-                // let handle1 = tokio::spawn(pw.send_all(&mut sr));
-                // let handle2 = tokio::spawn(sw.send_all(&mut pr));
-                // match tokio::join!(handle1, handle2) {
-                //     (Err(error), _) | (_, Err(error)) => {
-                //         warn!(%error, "中继 {} 已停止", &rr.uuid);
-                //     }
-                //     (Ok(Err(error)), _) | (_, Ok(Err(error))) => {
-                //         warn!(%error, "中继 {} 已停止", &rr.uuid);
-                //     }
-                //     _ => info!("中继 {} 已停止", &rr.uuid),
-                // }
+                Self::relay(stream, peer, speed_limit).await;
+                info!("本次中继已停止");
             }
             None => {
-                info!("来自 {} 的新中继请求: {}", addr, &rr.uuid);
+                info!("新中继请求");
                 peers.lock().await.insert(rr.uuid.clone(), stream);
-                debug!("已缓存本次中继请求");
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 if peers.lock().await.remove(&rr.uuid).is_some() {
-                    info!("中继 {} 超过30秒未收到对应连接，已停止本次中继", &rr.uuid);
+                    debug!("超过30秒未收到对应连接，已停止本次中继");
                 }
             }
         }
     }
 
-    async fn relay(mut stream: FramedStream, mut peer: FramedStream) {
+    async fn relay(mut stream: FramedStream, mut peer: FramedStream, speed_limit: Byte) {
+        let limiter = Limiter::<StandardClock>::new(speed_limit.get_bytes() as f64);
         loop {
             tokio::select! {
                 res = stream.next() => {
                     if let Some(Ok(bytes)) = res {
+                        let len = bytes.len();
+                        trace!("stream upload {} bytes", len);
+                        limiter.consume(len).await;
+
                         if peer.send_bytes(bytes.into()).await.is_err() {
                             break;
                         }
@@ -174,6 +184,10 @@ impl RelayServer {
                 }
                 res = peer.next() => {
                     if let Some(Ok(bytes)) = res {
+                        let len = bytes.len();
+                        trace!("peer upload {} bytes", len);
+                        limiter.consume(len).await;
+
                         if stream.send_bytes(bytes.into()).await.is_err(){
                             break;
                         }

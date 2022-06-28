@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
+use byte_unit::Byte;
 use clap::Parser;
 use hbb_common::sodiumoxide::base64;
 use hbb_common::sodiumoxide::base64::Variant;
@@ -22,7 +23,7 @@ async fn main() {
 
     let public_key = get_public_key(args.public_key);
 
-    let mut relay_server = relay_server::RelayServer::new(args.port, public_key);
+    let mut relay_server = relay_server::RelayServer::new(args.port, public_key, args.speed_limit);
 
     loop {
         relay_server.run().await;
@@ -39,6 +40,9 @@ struct Args {
     /// 公钥。如果未设置，将从运行目录的`id_ed25519.pub`文件中读取
     #[clap(long, short)]
     pub public_key: Option<String>,
+    /// 中继时每秒最大传输速率
+    #[clap(long, default_value = "4Mib")]
+    pub speed_limit: Byte,
 }
 
 fn get_public_key(pk: Option<String>) -> String {
