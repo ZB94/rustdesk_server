@@ -2,3 +2,5 @@
 .*/
 .env
 id_*
+*.pem
+server_address.json

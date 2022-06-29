@@ -1,5 +1,10 @@
 [workspace]
-members = ["rendezvous_server", "database", "relay_server"]
+members = [
+    "database",
+    "rendezvous_server",
+    "relay_server",
+    "api_server/*",
+]
 
 [profile.release]
 lto = true

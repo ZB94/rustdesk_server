@@ -7,7 +7,7 @@ authors = ["ZB_陈 <949536395@qq.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-database = { path = "../database" }
+database = { version = "0.1.0", features = ["peer"], path = "../database" }
 
 hbb_common = { git = "https://github.com/rustdesk/rustdesk", rev = "c1bad84a86ce26334ca7e47d0ac2dd21b7c5ad8f" }
 
