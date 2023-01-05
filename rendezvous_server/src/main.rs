@@ -54,20 +54,20 @@ async fn main() {
 }
 
 #[derive(Debug, Parser)]
-#[clap(version, author)]
+#[command(version, author)]
 struct Args {
     /// 数据库连接地址（仅支持postgresql）
     pub database_url: String,
     /// ID服务器监听端口
-    #[clap(default_value = "21116")]
+    #[arg(default_value = "21116")]
     pub port: u16,
     /// NAT类型测试服务鉴定端口。如果未设置，值为`port - 1`
-    #[clap(long, short)]
+    #[arg(long, short)]
     pub nat_server_port: Option<u16>,
     /// 安全密钥。如果未设置将从运行目录的`id_ed25519`文件中读取，如果文件不存在则自动生成。
     ///
     /// 如果手动指定安全密钥或触发自动生成，则密钥和公钥将会自动保存于`id_ed25519`和`id_ed25519.pub`文件中
-    #[clap(long, short)]
+    #[arg(long, short)]
     pub secret_key: Option<String>,
 }
 

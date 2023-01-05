@@ -9,7 +9,7 @@ peer = []
 user = ["dep:serde", "dep:chrono", "sqlx/json"]
 
 [dependencies]
-chrono = { version = "0.4.19", features = ["serde"], optional = true }
+chrono = { workspace = true, features = ["serde"], optional = true }
 serde = { version = "1.0.137", features = ["derive"], optional = true }
-sqlx = { version = "0.5", features = [ "runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
 uuid = { version = "1", features = ["v4"] }

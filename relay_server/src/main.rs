@@ -32,16 +32,16 @@ async fn main() {
 }
 
 #[derive(Debug, Parser)]
-#[clap(version, author)]
+#[command(version, author)]
 struct Args {
     /// 中继服务监听端口
-    #[clap(default_value = "21117")]
+    #[arg(default_value = "21117")]
     pub port: u16,
     /// 公钥。如果未设置，将从运行目录的`id_ed25519.pub`文件中读取
-    #[clap(long, short)]
+    #[arg(long, short)]
     pub public_key: Option<String>,
     /// 中继时每秒最大传输速率
-    #[clap(long, default_value = "4Mib")]
+    #[arg(long, default_value = "4Mib")]
     pub speed_limit: Byte,
 }
 
