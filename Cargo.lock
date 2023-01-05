@@ -1421,6 +1421,8 @@ dependencies = [
  "clap",
  "database",
  "jsonwebtoken",
+ "once_cell",
+ "rand",
  "rustls",
  "serde",
  "serde_json",

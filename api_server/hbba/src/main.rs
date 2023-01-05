@@ -7,6 +7,7 @@ extern crate async_trait;
 
 use clap::Parser;
 use database::Database;
+use rand::distributions::{Alphanumeric, DistString};
 use std::net::SocketAddr;
 
 mod server;
@@ -21,6 +22,11 @@ async fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("hbba=info,warn")),
         )
         .init();
+
+    let secret = args
+        .secret
+        .unwrap_or_else(|| Alphanumeric.sample_string(&mut rand::thread_rng(), 32));
+    server::jwt::Claims::init_secret(&secret);
 
     let pool = Database::new(&args.database_url)
         .await
@@ -61,4 +67,7 @@ pub struct Args {
     /// 设置客户端下载目录。设置时将指定目录的所有文件都改在到`/download`下
     #[arg(long, short)]
     pub download_dir: Option<String>,
+    /// 用于生成、校验接口token的安全码。如果为空会随机生成。
+    #[arg(long)]
+    pub secret: Option<String>,
 }

@@ -3,10 +3,13 @@ use crate::server::Response;
 use axum::extract::FromRequestParts;
 use axum::http::{request::Parts, StatusCode};
 use database::models::user::Permission;
-use jsonwebtoken::{Algorithm, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use once_cell::sync::{Lazy, OnceCell};
 
-const SECRET: &[u8] = b"rustdesk api server";
 const ALGORITHM: Algorithm = Algorithm::HS512;
+static KEY: OnceCell<(EncodingKey, DecodingKey)> = OnceCell::new();
+static HEADER: Lazy<Header> = Lazy::new(|| Header::new(ALGORITHM));
+static VALIDATION: Lazy<Validation> = Lazy::new(|| Validation::new(ALGORITHM));
 
 #[skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,6 +25,24 @@ pub struct Claims {
 }
 
 impl Claims {
+    pub fn init_secret(secret: &str) {
+        KEY.get_or_init(move || {
+            let ek = EncodingKey::from_secret(secret.as_bytes());
+            let dk = DecodingKey::from_secret(secret.as_bytes());
+            (ek, dk)
+        });
+    }
+
+    #[inline]
+    fn encoding_key() -> &'static EncodingKey {
+        &KEY.get().expect("未初始化安全码").0
+    }
+
+    #[inline]
+    fn decoding_key() -> &'static DecodingKey {
+        &KEY.get().expect("未初始化安全码").1
+    }
+
     #[inline]
     pub fn gen_user_token(username: String, local_peer: LocalPeer) -> String {
         Self::gen_token(username, Permission::User, Some(local_peer))
@@ -43,9 +64,7 @@ impl Claims {
             perm,
         };
 
-        let header = jsonwebtoken::Header::new(ALGORITHM);
-        let key = jsonwebtoken::EncodingKey::from_secret(SECRET);
-        jsonwebtoken::encode(&header, &claims, &key).unwrap()
+        jsonwebtoken::encode(&HEADER, &claims, Self::encoding_key()).unwrap()
     }
 }
 
@@ -65,9 +84,7 @@ impl<S: Sync> FromRequestParts<S> for Claims {
 
         if let Some((prefix, token)) = header.split_once(' ') {
             if prefix.to_lowercase() == PREFIX {
-                let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
-                let validation = Validation::new(ALGORITHM);
-                if let Ok(td) = jsonwebtoken::decode(token, &key, &validation) {
+                if let Ok(td) = jsonwebtoken::decode(token, Self::decoding_key(), &VALIDATION) {
                     return Ok(td.claims);
                 }
             }
