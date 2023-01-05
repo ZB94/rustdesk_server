@@ -7,7 +7,7 @@ use database::{Database, Error};
 use uuid::Uuid;
 
 #[instrument(skip(pool))]
-pub async fn login(Json(login): Json<Login>, pool: Extension<Database>) -> Response<LoginResponse> {
+pub async fn login(pool: Extension<Database>, Json(login): Json<Login>) -> Response<LoginResponse> {
     debug!("user login");
     match pool
         .query_user(&login.username, &login.password, Permission::User)
@@ -36,8 +36,8 @@ pub async fn login(Json(login): Json<Login>, pool: Extension<Database>) -> Respo
 
 #[instrument]
 pub async fn current_user(
-    Json(lp): Json<LocalPeer>,
     claims: Claims,
+    Json(lp): Json<LocalPeer>,
 ) -> (StatusCode, Response<User>) {
     debug!("query current user");
 
@@ -54,7 +54,7 @@ pub async fn current_user(
 }
 
 #[instrument]
-pub async fn logout(Json(_local_peer): Json<LocalPeer>, _claims: Claims) -> Response<()> {
+pub async fn logout(_claims: Claims, Json(_local_peer): Json<LocalPeer>) -> Response<()> {
     debug!("user logout");
     Response::ok(())
 }

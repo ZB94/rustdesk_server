@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[instrument(skip(pool))]
-pub async fn login(Json(login): Json<Login>, pool: Extension<Database>) -> Response<LoginResponse> {
+pub async fn login(pool: Extension<Database>, Json(login): Json<Login>) -> Response<LoginResponse> {
     debug!("user login");
     match pool
         .query_user(&login.username, &login.password, login.perm)
@@ -35,8 +35,8 @@ pub async fn login(Json(login): Json<Login>, pool: Extension<Database>) -> Respo
 #[instrument(skip(pool))]
 pub async fn change_password(
     claims: Claims,
-    Json(cp): Json<ChangePassword>,
     pool: Extension<Database>,
+    Json(cp): Json<ChangePassword>,
 ) -> Response<()> {
     debug!("user change password");
     match pool
@@ -93,9 +93,9 @@ pub async fn get_users(claims: Claims, pool: Extension<Database>) -> (StatusCode
 
 #[instrument(skip(pool))]
 pub async fn crate_user(
-    Json(user): Json<database::models::user::User>,
     claims: Claims,
     pool: Extension<Database>,
+    Json(user): Json<database::models::user::User>,
 ) -> (StatusCode, Response<()>) {
     if let Err(e) = check_admin(&claims) {
         return e;
@@ -115,9 +115,9 @@ pub async fn crate_user(
 
 #[instrument(skip(pool))]
 pub async fn delete_user(
-    Json(user): Json<DeleteUser>,
     claims: Claims,
     pool: Extension<Database>,
+    Json(user): Json<DeleteUser>,
 ) -> (StatusCode, Response<()>) {
     if let Err(e) = check_admin(&claims) {
         return e;
@@ -137,9 +137,9 @@ pub async fn delete_user(
 
 #[instrument(skip(pool))]
 pub async fn update_user(
-    Json(user): Json<UpdateUser>,
     claims: Claims,
     pool: Extension<Database>,
+    Json(user): Json<UpdateUser>,
 ) -> (StatusCode, Response<()>) {
     if let Err(e) = check_admin(&claims) {
         return e;
@@ -171,9 +171,9 @@ pub async fn get_server_address(
 
 #[instrument]
 pub async fn update_server_address(
-    Json(sa): Json<ServerAddress>,
     claims: Claims,
     server_address: Extension<Arc<RwLock<ServerAddress>>>,
+    Json(sa): Json<ServerAddress>,
 ) -> (StatusCode, Response<()>) {
     debug!("update server address");
     match check_admin(&claims) {

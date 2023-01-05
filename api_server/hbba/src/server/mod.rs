@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, get_service, post, put};
+use axum::routing::{get, get_service, post};
 use axum::Extension;
 use axum_server::tls_rustls::RustlsConfig;
 use database::Database;
@@ -41,7 +41,7 @@ pub async fn start(
         debug!("static dir: {}", &d);
         let static_dir = tower_http::services::ServeDir::new(d);
         router = router
-            .nest(
+            .nest_service(
                 "/static",
                 get_service(static_dir).handle_error(|_| ready(StatusCode::INTERNAL_SERVER_ERROR)),
             )
@@ -76,7 +76,7 @@ pub async fn start(
 
         let download_dir = tower_http::services::ServeDir::new(d);
         router = router
-            .nest(
+            .nest_service(
                 "/download",
                 get_service(download_dir)
                     .handle_error(|_| ready(StatusCode::INTERNAL_SERVER_ERROR)),
@@ -103,12 +103,17 @@ pub async fn start(
         .route("/api/ab/get", post(address_book::get_address_book))
         .route("/manage/login", post(manage::login))
         .route("/manage/change_password", post(manage::change_password))
-        .route("/manage/user", get(manage::get_users))
-        .route("/manage/user", post(manage::crate_user))
-        .route("/manage/user", delete(manage::delete_user))
-        .route("/manage/user", put(manage::update_user))
-        .route("/manage/server_address", get(manage::get_server_address))
-        .route("/manage/server_address", put(manage::update_server_address))
+        .route(
+            "/manage/user",
+            get(manage::get_users)
+                .post(manage::crate_user)
+                .put(manage::update_user)
+                .delete(manage::delete_user),
+        )
+        .route(
+            "/manage/server_address",
+            get(manage::get_server_address).put(manage::update_server_address),
+        )
         .layer(Extension(Arc::new(RwLock::new(server_address))))
         .layer(Extension(pool));
 

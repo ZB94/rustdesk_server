@@ -7,9 +7,9 @@ use serde_with::json::JsonString;
 
 #[instrument(skip(pool))]
 pub async fn get_address_book(
-    _data: Json<serde_json::Value>,
     claims: Claims,
     pool: Extension<Database>,
+    _data: Json<serde_json::Value>,
 ) -> Response<AddressBookData> {
     debug!("get address book");
     if let Err(e) = user::check_perm(&claims, None) {
@@ -28,9 +28,9 @@ pub async fn get_address_book(
 
 #[instrument(skip(pool))]
 pub async fn update_address_book(
-    Json(AddressBookData { data }): Json<AddressBookData>,
     claims: Claims,
     pool: Extension<Database>,
+    Json(AddressBookData { data }): Json<AddressBookData>,
 ) -> Response<()> {
     debug!("update address book");
     if let Err(e) = user::check_perm(&claims, None) {

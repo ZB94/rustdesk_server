@@ -1,7 +1,7 @@
 use crate::server::user::LocalPeer;
 use crate::server::Response;
-use axum::extract::{FromRequest, RequestParts};
-use axum::http::StatusCode;
+use axum::extract::FromRequestParts;
+use axum::http::{request::Parts, StatusCode};
 use database::models::user::Permission;
 use jsonwebtoken::{Algorithm, Validation};
 
@@ -50,35 +50,29 @@ impl Claims {
 }
 
 #[async_trait]
-impl<B: Send> FromRequest<B> for Claims {
+impl<S: Sync> FromRequestParts<S> for Claims {
     type Rejection = (StatusCode, Response<()>);
 
-    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         const ERROR_CODE: StatusCode = StatusCode::UNAUTHORIZED;
         const PREFIX: &str = "bearer";
 
-        let header = req
-            .headers()
+        let header = parts
+            .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| (ERROR_CODE, Response::error("输入token无效，请重新登录")))?;
 
-        let mut iter = header.split_whitespace();
-        iter.next()
-            .and_then(|prefix| {
-                if prefix.to_lowercase() == PREFIX {
-                    Some(())
-                } else {
-                    None
-                }
-            })
-            .and_then(|_| iter.next())
-            .and_then(|token| {
+        if let Some((prefix, token)) = header.split_once(' ') {
+            if prefix.to_lowercase() == PREFIX {
                 let key = jsonwebtoken::DecodingKey::from_secret(SECRET);
                 let validation = Validation::new(ALGORITHM);
-                jsonwebtoken::decode(token, &key, &validation).ok()
-            })
-            .map(|d| d.claims)
-            .ok_or_else(|| (ERROR_CODE, Response::error("token格式错误，请重新登录")))
+                if let Ok(td) = jsonwebtoken::decode(token, &key, &validation) {
+                    return Ok(td.claims);
+                }
+            }
+        }
+
+        Err((ERROR_CODE, Response::error("token格式错误，请重新登录")))
     }
 }
