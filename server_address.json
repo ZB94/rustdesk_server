@@ -1,6 +1,6 @@
 {
-    "id_server": "192.168.6.242:21116",
-    "relay_server": "192.168.6.242:21117",
-    "api_server": "192.168.6.242:21114",
+    "id_server": "192.168.6.254:21116",
+    "relay_server": "192.168.6.254:21117",
+    "api_server": "192.168.6.254:21114",
     "pubkey": "3pylii9gPgBlSsk_RwPVjT26poK-554d249TZ2poWJ4="
 }

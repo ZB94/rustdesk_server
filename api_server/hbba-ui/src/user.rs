@@ -124,7 +124,7 @@ impl User {
                                 ui.label("");
                                 ui.label("");
                                 let change = ui
-                                    .with_layout(Layout::right_to_left(), |ui| {
+                                    .with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         ui.button("修改").clicked()
                                     })
                                     .inner;
@@ -186,7 +186,7 @@ impl User {
                     ui.end_row();
 
                     ui.label("");
-                    ui.with_layout(Layout::right_to_left(), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
                             .button(RichText::new("退出").color(Color32::RED))
                             .clicked()
@@ -326,7 +326,7 @@ impl User {
                         ui.end_row();
 
                         ui.label("");
-                        ui.with_layout(Layout::right_to_left(), |ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.button("添加").clicked() {
                                 if self.create_user.0.is_empty() || self.create_user.1.is_empty() {
                                     self.add_error(Operation::CreateUser, "用户名或密码不能为空");
@@ -395,7 +395,7 @@ impl User {
 
                     ui.checkbox(&mut self.remembered, "记住密码")
                         .on_hover_text("仅在当前页面有效。刷新或关闭页面后重置");
-                    ui.with_layout(Layout::right_to_left(), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("登录").clicked() {
                             if self.username.is_empty() || self.password.is_empty() {
                                 self.add_error(Operation::Login, "用户名或密码不能为空");

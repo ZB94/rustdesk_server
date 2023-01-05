@@ -3,13 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <title>RustDesk Manage</title>
+    <style>
+        html, body { height: 100%; width: 100% }
+        body { overflow: hidden; }
+    </style>
 </head>
-<body style="margin: 0;padding: 0; overflow: hidden">
+<body>
     <canvas id="view"></canvas>
 <script type="module">
     import {default as init, start} from "./pkg/hbba_ui.js";
     await init();
-    start();
+    await start();
 </script>
 </body>
 </html>

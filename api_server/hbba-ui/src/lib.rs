@@ -22,7 +22,7 @@ mod utils;
 pub(crate) mod user;
 
 #[wasm_bindgen]
-pub fn start() {
+pub async fn start() -> Result<(), eframe::wasm_bindgen::JsValue> {
     utils::set_panic_hook();
 
     #[cfg(feature = "log")]
@@ -30,9 +30,12 @@ pub fn start() {
 
     eframe::start_web(
         "view",
+        Default::default(),
         Box::new(|ctx: &CreationContext| Box::new(Application::new(ctx))),
     )
-    .unwrap();
+    .await?;
+
+    Ok(())
 }
 
 pub struct Application {
@@ -108,7 +111,7 @@ static FONT_DATA: Lazy<RwLock<Option<FontData>>> = Lazy::new(|| {
                 if let Ok(data) = resp.binary().await {
                     let mut font = FontData::from_owned(data);
                     if let Ok(mut fd) = FONT_DATA.write() {
-                        font.tweak.scale = 1.4;
+                        font.tweak.scale = 1.1;
                         *fd = Some(font);
                         return;
                     }
