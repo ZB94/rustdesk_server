@@ -11,5 +11,5 @@ user = ["dep:serde", "dep:chrono", "sqlx/json"]
 [dependencies]
 chrono = { workspace = true, features = ["serde"], optional = true }
 serde = { version = "1.0.137", features = ["derive"], optional = true }
-sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
 uuid = { version = "1", features = ["v4"] }
