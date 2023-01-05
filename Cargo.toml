@@ -1,10 +1,14 @@
 [workspace]
-members = [
-    "database",
-    "rendezvous_server",
-    "relay_server",
-    "api_server/*",
-]
+members = ["database", "rendezvous_server", "relay_server", "api_server/*"]
+
+[workspace.dependencies]
+hbb_common = { git = "https://github.com/rustdesk/rustdesk", rev = "c1bad84a86ce26334ca7e47d0ac2dd21b7c5ad8f" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = "0.4"
+clap = { version = "3", features = ["derive"] }
+database = { version = "0.1.0", path = "database" }
 
 [profile.release]
 lto = true

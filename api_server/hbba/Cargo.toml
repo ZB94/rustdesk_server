@@ -10,16 +10,16 @@ axum = "0.5"
 axum-server = { version = "0.4", features = ["tls-rustls"] }
 rustls = { version = "0.20", features = ["dangerous_configuration"] }
 tower-http = { version = "0.3", features = ["fs", "compression-full"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "fs"] }
+tokio = { workspace = true, features = ["fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_with = { version = "1", features = ["json"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3.9", features = ["env-filter"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 base64 = "0.13.0"
 uuid = "1"
-chrono = { version = "0.4.19", features = ["serde"] }
+chrono = { workspace = true, features = ["serde"] }
 jsonwebtoken = "8"
 async-trait = "0.1.52"
-clap = { version = "3", features = ["derive"] }
-database = { version = "0.1.0", features = ["user"], path = "../../database" }
+clap = { workspace = true }
+database = { workspace = true, features = ["user"] }

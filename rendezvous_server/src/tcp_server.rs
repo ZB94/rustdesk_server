@@ -9,7 +9,7 @@ use hbb_common::futures::SinkExt;
 use hbb_common::futures_util::StreamExt;
 use hbb_common::protobuf::Message;
 use hbb_common::rendezvous_proto::{
-    punch_hole_response, register_pk_response, rendezvous_message, FetchLocalAddr, PunchHole,
+    punch_hole_response, register_pk_response, rendezvous_message, FetchLocalAddr,
     PunchHoleResponse, RegisterPk, RegisterPkResponse, RendezvousMessage, TestNatResponse,
 };
 use hbb_common::sodiumoxide::base64;
@@ -159,7 +159,7 @@ impl TcpServer {
             };
             trace!("tcp: {:?}", &msg);
 
-            let public_key = base64::encode(&secret_key.public_key().0, Variant::UrlSafe);
+            let public_key = base64::encode(secret_key.public_key().0, Variant::UrlSafe);
 
             match msg {
                 rendezvous_message::Union::register_pk(rp) => {

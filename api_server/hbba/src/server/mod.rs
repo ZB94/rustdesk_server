@@ -84,7 +84,7 @@ pub async fn start(
             .route(
                 "/download_list",
                 get(|dl: Extension<Arc<Vec<DownloadInfo>>>| async move {
-                    let dl = (&*dl.0).clone();
+                    let dl = (*dl.0).clone();
                     Response::ok(serde_json::json!({ "links": dl }))
                 }),
             )

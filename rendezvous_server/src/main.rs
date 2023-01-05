@@ -94,10 +94,10 @@ pub fn get_or_gen_sk(secret_key: Option<String>) -> SecretKey {
         });
 
     if save {
-        let pk = base64::encode(&sk.public_key(), VARIANT);
+        let pk = base64::encode(sk.public_key(), VARIANT);
         let sk_str = base64::encode(&sk, VARIANT);
         std::fs::write(SECRET_KEY_FILE, sk_str).expect("密钥保存失败");
-        std::fs::write(PUBLIC_KEY_FILE, &pk).expect("公钥保存失败");
+        std::fs::write(PUBLIC_KEY_FILE, pk).expect("公钥保存失败");
         info!("已将密钥/公钥保存到 {SECRET_KEY_FILE}/{PUBLIC_KEY_FILE}");
     }
 

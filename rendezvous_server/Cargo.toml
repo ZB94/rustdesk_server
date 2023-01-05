@@ -7,12 +7,12 @@ authors = ["ZB_陈 <949536395@qq.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-database = { version = "0.1.0", features = ["peer"], path = "../database" }
+database = { workspace = true, features = ["peer"] }
 
-hbb_common = { git = "https://github.com/rustdesk/rustdesk", rev = "c1bad84a86ce26334ca7e47d0ac2dd21b7c5ad8f" }
+hbb_common = { workspace = true }
 
-chrono = "0.4.19"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-tracing = "0.1.31"
-tracing-subscriber = { version = "0.3.9", features = ["env-filter"] }
-clap = { version = "3.2.6", features = ["derive"] }
+chrono = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
