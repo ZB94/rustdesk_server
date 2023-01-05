@@ -110,7 +110,7 @@ impl RelayServer {
         let rr = if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
             match RendezvousMessage::parse_from_bytes(&bytes) {
                 Ok(msg) => match msg.union {
-                    Some(rendezvous_message::Union::request_relay(rr)) => {
+                    Some(rendezvous_message::Union::RequestRelay(rr)) => {
                         Span::current()
                             .record("id", &display(&rr.id))
                             .record("uuid", &display(&rr.uuid));

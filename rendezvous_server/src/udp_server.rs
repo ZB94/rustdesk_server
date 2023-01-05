@@ -114,7 +114,7 @@ impl UdpServer {
             trace!("已接收到新消息");
 
             match msg {
-                rendezvous_message::Union::register_peer(rp) => {
+                rendezvous_message::Union::RegisterPeer(rp) => {
                     let request_pk = match db.update_addr(&rp.id, addr).await {
                         Ok(r) => r,
                         Err(error) => {
@@ -131,7 +131,7 @@ impl UdpServer {
                     socket.send(&msg_out, addr).await?;
                 }
 
-                rendezvous_message::Union::register_pk(rk) => {
+                rendezvous_message::Union::RegisterPk(rk) => {
                     if rk.pk.is_empty() {
                         warn!("输入pk为空");
                         return send_rk_res(socket, addr, UUID_MISMATCH).await;
@@ -182,7 +182,7 @@ impl UdpServer {
                     debug!(changed, ?guid, "修改状态");
 
                     return if changed {
-                        match db.update_pk(guid, &id, uuid, rk.pk, addr).await {
+                        match db.update_pk(guid, &id, uuid, rk.pk.to_vec(), addr).await {
                             Ok(_) => {
                                 info!("Peer({id})状态已更新");
                                 send_rk_res(socket, addr, register_pk_response::Result::OK).await

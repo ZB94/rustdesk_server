@@ -162,7 +162,7 @@ impl TcpServer {
             let public_key = base64::encode(secret_key.public_key().0, Variant::UrlSafe);
 
             match msg {
-                rendezvous_message::Union::register_pk(rp) => {
+                rendezvous_message::Union::RegisterPk(rp) => {
                     let result = Self::update_id(db.clone(), &rp).await;
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
@@ -171,7 +171,7 @@ impl TcpServer {
                     });
                     send!(msg_out);
                 }
-                rendezvous_message::Union::punch_hole_request(phr) => {
+                rendezvous_message::Union::PunchHoleRequest(phr) => {
                     if phr.licence_key != public_key {
                         let mut msg_out = RendezvousMessage::new();
                         msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -207,7 +207,7 @@ impl TcpServer {
                             // } else {
                             let mut msg_out = RendezvousMessage::new();
                             msg_out.set_fetch_local_addr(FetchLocalAddr {
-                                socket_addr: AddrMangle::encode(addr),
+                                socket_addr: AddrMangle::encode(addr).into(),
                                 ..Default::default()
                             });
                             let _ = sender.send((peer_addr, msg_out));
@@ -232,7 +232,7 @@ impl TcpServer {
                         }
                     }
                 }
-                rendezvous_message::Union::local_addr(la) => {
+                rendezvous_message::Union::LocalAddr(la) => {
                     let socket_addr = AddrMangle::decode(&la.socket_addr);
                     let local_addr = AddrMangle::decode(&la.local_addr);
                     let id = &la.id;
@@ -249,10 +249,10 @@ impl TcpServer {
                     msg_out.set_punch_hole_response(p);
                     Self::send(&map, socket_addr, msg_out).await;
                 }
-                rendezvous_message::Union::relay_response(mut rr) => {
+                rendezvous_message::Union::RelayResponse(mut rr) => {
                     let addr_b = AddrMangle::decode(&rr.socket_addr);
                     rr.socket_addr = Default::default();
-                    let id = rr.get_id();
+                    let id = rr.id();
                     if !id.is_empty() {
                         let pk = Self::get_pk(db.clone(), &rr.version, id.to_string(), &secret_key)
                             .await;
@@ -262,23 +262,24 @@ impl TcpServer {
                     msg_out.set_relay_response(rr);
                     Self::send(&map, addr_b, msg_out).await;
                 }
-                rendezvous_message::Union::request_relay(mut rr) => match db.get_peer(&rr.id).await
-                {
-                    Ok(Some(peer)) => {
-                        let mut msg_out = RendezvousMessage::new();
-                        rr.socket_addr = AddrMangle::encode(addr);
-                        msg_out.set_request_relay(rr);
-                        let peer_addr = peer.socket_addr.parse().unwrap();
-                        let _ = sender.send((peer_addr, msg_out));
+                rendezvous_message::Union::RequestRelay(mut rr) => {
+                    match db.get_peer(&rr.id).await {
+                        Ok(Some(peer)) => {
+                            let mut msg_out = RendezvousMessage::new();
+                            rr.socket_addr = AddrMangle::encode(addr).into();
+                            msg_out.set_request_relay(rr);
+                            let peer_addr = peer.socket_addr.parse().unwrap();
+                            let _ = sender.send((peer_addr, msg_out));
+                        }
+                        Ok(None) => warn!(message = ?rr, "请求中继到不存在Peer"),
+                        Err(error) => warn!(message = ?rr, %error, "获取Peer时出现错误"),
                     }
-                    Ok(None) => warn!(message = ?rr, "请求中继到不存在Peer"),
-                    Err(error) => warn!(message = ?rr, %error, "获取Peer时出现错误"),
-                },
-                rendezvous_message::Union::punch_hole_sent(phs) => {
+                }
+                rendezvous_message::Union::PunchHoleSent(phs) => {
                     let addr_a = AddrMangle::decode(&phs.socket_addr);
                     let mut msg_out = RendezvousMessage::new();
                     let mut p = PunchHoleResponse {
-                        socket_addr: AddrMangle::encode(addr),
+                        socket_addr: AddrMangle::encode(addr).into(),
                         pk: Self::get_pk(db.clone(), &phs.version, phs.id, &secret_key).await,
                         relay_server: phs.relay_server.clone(),
                         ..Default::default()
@@ -289,7 +290,7 @@ impl TcpServer {
                     msg_out.set_punch_hole_response(p);
                     let _ = Self::send(&map, addr_a, msg_out).await;
                 }
-                rendezvous_message::Union::test_nat_request(_) => {
+                rendezvous_message::Union::TestNatRequest(_) => {
                     debug!("test nat request");
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_test_nat_response(TestNatResponse {
@@ -374,22 +375,23 @@ impl TcpServer {
     }
 
     #[inline]
-    async fn get_pk(db: Database, version: &str, id: String, sk: &SecretKey) -> Vec<u8> {
+    async fn get_pk(db: Database, version: &str, id: String, sk: &SecretKey) -> Bytes {
         if version.is_empty() {
-            Vec::new()
+            Default::default()
         } else {
             match db.get_peer(&id).await {
                 Ok(Some(peer)) => sign::sign(
                     &hbb_common::message_proto::IdPk {
                         id,
-                        pk: peer.pk,
+                        pk: peer.pk.into(),
                         ..Default::default()
                     }
                     .write_to_bytes()
                     .unwrap_or_default(),
                     sk,
-                ),
-                _ => Vec::new(),
+                )
+                .into(),
+                _ => Default::default(),
             }
         }
     }

@@ -41,7 +41,7 @@ impl TestNatServer {
 
         if let Some(Ok(bytes)) = stream.next_timeout(30_000).await {
             if let Ok(msg_in) = RendezvousMessage::parse_from_bytes(&bytes) {
-                if let Some(rendezvous_message::Union::test_nat_request(_)) = msg_in.union {
+                if let Some(rendezvous_message::Union::TestNatRequest(_)) = msg_in.union {
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_test_nat_response(TestNatResponse {
                         port: addr.port() as _,
